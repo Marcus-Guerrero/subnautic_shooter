@@ -3,7 +3,7 @@ from sys import exit
 from random import randint
 
 class Player(pygame.sprite.Sprite):
-    def __init__(self, pos, group):
+    def __init__(self, pos, group, bullet_group):
         super().__init__(group)
 
         #Character rendering
@@ -17,8 +17,15 @@ class Player(pygame.sprite.Sprite):
         self.last_hit_time = 0
         self.hit_cooldown = 1000
 
+        #Shooting System
+        self.bullet_group = bullet_group
+        self.shoot_cooldown = 300
+        self.last_shot = 0
+
     def player_movement(self):
         keys = pygame.key.get_pressed()
+
+        #Vertical Movement
         if keys[pygame.K_w]:
             self.direction.y = -1
         elif keys[pygame.K_s]:
@@ -26,6 +33,7 @@ class Player(pygame.sprite.Sprite):
         else:
             self.direction.y = 0
 
+        #Horizontal Movement
         if keys[pygame.K_d]:
             self.direction.x = 1
         elif keys[pygame.K_a]:
@@ -40,6 +48,20 @@ class Player(pygame.sprite.Sprite):
             self.last_hit_time = current
             print (f"Player health: {self.health}")
 
+    def player_shooting (self, camere_offset):
+        current_time = pygame.time.get_ticks()
+
+        if current_time - self.last_shot >= self.shoot_cooldown:
+            mouse_screen = pygame.mouse.get_pos()
+
+            #World position of mouse
+            mouse_world = pygame.math.Vector2(mouse_screen) + camere_offset
+            player_pos = pygame.math.Vector2(self.rect.center)
+            direction = mouse_world - player_pos
+
+            if direction.length() != 0:
+                Bullet(self.rect.center, direction, self.bullet_group)
+
     def update (self):
         self.player_movement()
         self.rect.center += (self.direction * self.speed)
@@ -49,6 +71,21 @@ class Obstacle (pygame.sprite.Sprite):
         super().__init__(group)
         self.image = pygame.image.load("graphics/Fly1.png").convert_alpha()
         self.rect = self.image.get_rect(center= pos)
+
+class Bullet(pygame.sprite.Sprite):
+    def __init__(self, pos, direction, group):
+        super().__init__(group)
+        self.image = pygame.image.load("graphics/bullet.png").convert_alpha()
+        self.rect = self.image.get_rect(center = pos)
+        self.direction = direction.normalize() #if direction.length() != 0 else direction
+        self.speed = 12
+    
+    def update(self):
+        self.rect.center += self.direction * self.speed
+
+        #Removing bullets
+        if abs(self.rect.x) > 4000 or abs(self.rect.y) >4000:
+            self.kill()
 
 class Camera (pygame.sprite.Group):
     def __init__(self):
@@ -88,7 +125,8 @@ class Game:
 
         #General Setup
         self.camera_group = Camera()
-        self.player = Player((500, 300), self.camera_group)
+        self.bullet_group = pygame.sprite.Group()
+        self.player = Player((500, 300), self.camera_group, self.bullet_group)
         self.obstacle_group =pygame.sprite.Group()
 
         #Creating obstacles
@@ -102,8 +140,15 @@ class Game:
             Obstacle((random_x, random_y), [self.camera_group, self.obstacle_group])
 
     def collision_handling(self):
+        #Player collision
         if pygame.sprite.spritecollide(self.player, self.obstacle_group, False):
             self.player.take_damage()
+
+        #Bullet collision
+        for bullet in self.bullet_group:
+            hit_obstacles = pygame.sprite.spritecollide(bullet,self.obstacle_group, True)
+            if hit_obstacles:
+                bullet.kill()
         
         if self.player.health <= 0:
             self.running = False
@@ -112,14 +157,22 @@ class Game:
         for event in pygame.event.get(): 
             if event.type == pygame.QUIT: 
                 self.running = False
+            
+            if event.type == pygame.KEYDOWN:
+                if  event.key == pygame.K_SPACE:
+                    self.player.player_shooting(self.camera_group.offset)
 
     def update(self):
         self.camera_group.update()
+        self.bullet_group.update()
         self.collision_handling()
 
     def draw(self):
         self.screen.fill((0, 0, 0))
         self.camera_group.custom(self.player)
+        for bullet in self.bullet_group:
+            offset_pos = bullet.rect.topleft - self.camera_group.offset
+            self.screen.blit(bullet.image, offset_pos)
         pygame.display.update() 
     
     def run(self):
