@@ -136,7 +136,7 @@ class Game:
         self.obstacle_group =pygame.sprite.Group()
 
         #Creating obstacles
-        self.obstacle_implementation()
+        self.spawn_enemies(25)
         self.running = True
 
         #Score board
@@ -149,9 +149,24 @@ class Game:
 
         #Current state of game status
         self.state = PLAYING
+    
+    def reset_game(self):
+        self.score = 0
+        self.player.health = 5
 
-    def obstacle_implementation(self):
-        for obs in range(25):
+        #Clearing all entities
+        self.bullet_group.empty()
+        self.obstacle_group.empty()
+        self.camera_group.empty()
+
+        #Recreating the character
+        self.player = Player((500, 300), self.camera_group, self.bullet_group)
+
+        #Spawn enemies again
+        self.spawn_enemies(25)
+
+    def spawn_enemies(self, amount = 25):
+        for obs in range(amount):
             random_x = randint(-1824, 1824)
             random_y = randint(-1600, 1600)
             Obstacle((random_x, random_y), [self.camera_group, self.obstacle_group])
@@ -195,6 +210,7 @@ class Game:
                         self.running = False
 
                 if event.key == pygame.K_RETURN and self.state == SCOREBOARD:
+                    self.reset_game()
                     self.state = PLAYING
                     self.score = 0
                     self.player.health = 5
