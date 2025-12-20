@@ -5,11 +5,18 @@ from random import randint
 class Player(pygame.sprite.Sprite):
     def __init__(self, pos, group):
         super().__init__(group)
+
+        #Character rendering
         self.image = pygame.image.load('graphics/player.png').convert_alpha()
         self.rect = self.image.get_rect(center = pos)
         self.direction = pygame.math.Vector2()
         self.speed = 5
-    
+
+        #Health System
+        self.health = 5
+        self.last_hit_time = 0
+        self.hit_cooldown = 1000
+
     def player_movement(self):
         keys = pygame.key.get_pressed()
         if keys[pygame.K_w]:
@@ -25,6 +32,13 @@ class Player(pygame.sprite.Sprite):
             self.direction.x = -1
         else:
             self.direction.x = 0
+    
+    def take_damage(self):
+        current = pygame.time.get_ticks()
+        if current - self.last_hit_time > self.hit_cooldown:
+            self.health -= 1
+            self.last_hit_time = current
+            print (f"Player health: {self.health}")
 
     def update (self):
         self.player_movement()
@@ -33,7 +47,7 @@ class Player(pygame.sprite.Sprite):
 class Obstacle (pygame.sprite.Sprite):
     def __init__(self, pos, group):
         super().__init__(group)
-        self.image = pygame.image.load("graphics/tree.png").convert_alpha()
+        self.image = pygame.image.load("graphics/Fly1.png").convert_alpha()
         self.rect = self.image.get_rect(center= pos)
 
 class Camera (pygame.sprite.Group):
@@ -65,33 +79,59 @@ class Camera (pygame.sprite.Group):
             offset_pos = sprite.rect.topleft - self.offset
             self.surface.blit(sprite.image, offset_pos)
 
-pygame.init() 
-screen = pygame.display.set_mode((1500, 1000))
-pygame.display.set_caption("Subnautic Shooter")
-fps = pygame.time.Clock()
+class Game:
+    def __init__(self):
+        pygame.init() 
+        self.screen = pygame.display.set_mode((1500, 1000))
+        pygame.display.set_caption("Subnautic Shooter")
+        self.fps = pygame.time.Clock()
 
-#General Setup
-camera_group = Camera()
-player = Player((500, 300), camera_group)
+        #General Setup
+        self.camera_group = Camera()
+        self.player = Player((500, 300), self.camera_group)
+        self.obstacle_group =pygame.sprite.Group()
 
-#Surface
-surface = pygame.image.load("graphics/ground.png").convert_alpha()
-surface_rect = surface.get_rect(center = (0, 0))
+        #Creating obstacles
+        self.obstacle_implementation()
+        self.running = True
+        
+    def obstacle_implementation(self):
+        for obs in range(25):
+            random_x = randint(-1824, 1824)
+            random_y = randint(-1600, 1600)
+            Obstacle((random_x, random_y), [self.camera_group, self.obstacle_group])
 
-for obs in range(20):
-    random_x = randint(0, 1500)
-    random_y = randint(0, 1000)
-    Obstacle((random_x, random_y), camera_group)
+    def collision_handling(self):
+        if pygame.sprite.spritecollide(self.player, self.obstacle_group, False):
+            self.player.take_damage()
+        
+        if self.player.health <= 0:
+            self.running = False
 
-while True: 
-    for event in pygame.event.get(): 
-        if event.type == pygame.QUIT: 
-            pygame.quit() 
-            exit()
+    def handling_events(self):
+        for event in pygame.event.get(): 
+            if event.type == pygame.QUIT: 
+                self.running = False
+
+    def update(self):
+        self.camera_group.update()
+        self.collision_handling()
+
+    def draw(self):
+        self.screen.fill((0, 0, 0))
+        self.camera_group.custom(self.player)
+        pygame.display.update() 
     
-    screen.fill((0, 0, 0))
-    camera_group.update()
-    camera_group.custom(player)
+    def run(self):
+        while self.running:
+            self.handling_events()
+            self.update()
+            self.draw()
+            self.fps.tick(60)
 
-    pygame.display.update() 
-    fps.tick(60)
+        pygame.quit()
+        exit()
+
+if __name__ == "__main__":
+    game = Game()
+    game.run()
