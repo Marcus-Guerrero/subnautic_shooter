@@ -2,6 +2,11 @@ import pygame
 from sys import exit
 from random import randint
 
+#Game status
+PLAYING = "playing"
+PAUSED = "paused"
+SCOREBOARD = "scoreboard"
+
 class Player(pygame.sprite.Sprite):
     def __init__(self, pos, group, bullet_group):
         super().__init__(group)
@@ -118,6 +123,7 @@ class Camera (pygame.sprite.Group):
 
 class Game:
     def __init__(self):
+        #Initialization
         pygame.init() 
         self.screen = pygame.display.set_mode((1500, 1000))
         pygame.display.set_caption("Subnautic Shooter")
@@ -132,7 +138,18 @@ class Game:
         #Creating obstacles
         self.obstacle_implementation()
         self.running = True
-        
+
+        #Score board
+        self.score = 0
+        self.scores = []
+        self.max_scores =5
+        self.show_scoreboard = False
+        self.font_b = pygame.font.Font(None, 70)
+        self.font_s = pygame.font.Font (None, 36)
+
+        #Current state of game status
+        self.state = PLAYING
+
     def obstacle_implementation(self):
         for obs in range(25):
             random_x = randint(-1824, 1824)
@@ -149,9 +166,13 @@ class Game:
             hit_obstacles = pygame.sprite.spritecollide(bullet,self.obstacle_group, True)
             if hit_obstacles:
                 bullet.kill()
+                self.score += len(hit_obstacles)
         
         if self.player.health <= 0:
-            self.running = False
+            self.scores.append(self.score)
+            self.scores.sort(reverse = True)
+            self.scores = self.scores[:self.max_scores]
+            self.state = SCOREBOARD
 
     def handling_events(self):
         for event in pygame.event.get(): 
@@ -159,20 +180,81 @@ class Game:
                 self.running = False
             
             if event.type == pygame.KEYDOWN:
-                if  event.key == pygame.K_SPACE:
-                    self.player.player_shooting(self.camera_group.offset)
+
+                #Toggling Pause
+                if event.key == pygame.K_ESCAPE:
+                    if self.state == PLAYING:
+                        self.state = PAUSED
+                    elif self.state == PAUSED:
+                        self.state = PLAYING
+
+                if self.state == PAUSED:
+                    if event.key == pygame.K_r:
+                        self.state = PLAYING
+                    elif event.key == pygame.K_q:
+                        self.running = False
+
+                if event.key == pygame.K_RETURN and self.state == SCOREBOARD:
+                    self.state = PLAYING
+                    self.score = 0
+                    self.player.health = 5
+                
+                if self.state == PLAYING:
+                    if event.key == pygame.K_SPACE:
+                        self.player.player_shooting(self.camera_group.offset)
 
     def update(self):
-        self.camera_group.update()
-        self.bullet_group.update()
-        self.collision_handling()
+        if self.state == PLAYING:
+            self.camera_group.update()
+            self.bullet_group.update()
+            self.collision_handling()
+    
+    def draw_scoreboard(self):
+        overlay = pygame.Surface(self.screen.get_size())
+        overlay.set_alpha(200)
+        overlay.fill((0, 0, 0))
+        self.screen.blit(overlay, (0, 0))
+
+        title= self.font_b.render("HIGHSCORE", True, (255, 255, 255))
+        self.screen.blit(title, title.get_rect(center= (750, 200)))
+
+        for i, score in enumerate(self.scores):
+            text = self.font_s.render(f"{i + 1}. {score}", True, (255, 255, 255))
+            self.screen.blit(text, (650, 300 + i * 50))
+
+        hint = self.font_s.render("Please ENTER to close", True, (180, 180, 180))
+        self.screen.blit(hint, hint.get_rect(center= (750, 550)))
+    
+    def draw_paused_menu (self):
+        overlay = pygame.Surface(self.screen.get_size())
+        overlay.set_alpha(180)
+        overlay.fill((0, 0, 0))
+        self.screen.blit(overlay, (0, 0))
+
+        title = self.font_b.render("PAUSED", True, (255, 255, 255))
+        resume = self.font_s.render("R - Resume Game", True, (255, 255, 255))
+        quit_game = self.font_s.render("Q - Exit Game", True, (255, 255, 255))
+
+        self.screen.blit(title, title.get_rect(center=(750, 350)))
+        self.screen.blit(resume, resume.get_rect(center=(750, 450)))
+        self.screen.blit(quit_game, quit_game.get_rect(center=(750, 500)))
 
     def draw(self):
         self.screen.fill((0, 0, 0))
         self.camera_group.custom(self.player)
+
         for bullet in self.bullet_group:
             offset_pos = bullet.rect.topleft - self.camera_group.offset
             self.screen.blit(bullet.image, offset_pos)
+        
+        score_surf = self.font_s.render(f"Score: {self.score}", True, (255, 255, 255))
+        self.screen.blit(score_surf, (20, 20))
+
+        if self.state == SCOREBOARD:
+            self.draw_scoreboard()
+        elif self.state == PAUSED:
+            self.draw_paused_menu()
+
         pygame.display.update() 
     
     def run(self):
