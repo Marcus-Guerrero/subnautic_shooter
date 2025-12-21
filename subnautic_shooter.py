@@ -29,24 +29,54 @@ class Player(pygame.sprite.Sprite):
         self.shoot_cooldown = 300
         self.last_shot = 0
 
+        #Power Core
+        self.max_power = 100
+        self.power = self.max_power
+        self.power_regen = 10
+        self.boost_drain = 30
+        self.shoot_cost = 20
+
+        #Speed value
+        self.normal_speed = 5
+        self.boost_speed = 9
+
     def player_movement(self):
         keys = pygame.key.get_pressed()
 
-        #Vertical Movement
-        if keys[pygame.K_w]:
-            self.direction.y = -1
-        elif keys[pygame.K_s]:
-            self.direction.y = 1
-        else:
-            self.direction.y = 0
+        #Direction
+        self.direction.x = keys[pygame.K_d] - keys[pygame.K_a]
+        self.direction.y = keys[pygame.K_s] - keys[pygame.K_w]
 
-        #Horizontal Movement
-        if keys[pygame.K_d]:
-            self.direction.x = 1
-        elif keys[pygame.K_a]:
-            self.direction.x = -1
+        #Diagonal movement
+        if self.direction.length() > 0:
+            self.direction = self.direction.normalize()
+
+        #Boosting
+        if keys[pygame.K_LSHIFT] and self.power > 0:
+            self.speed = self.boost_speed
+            self.power -= self.boost_drain * (1/60)
         else:
-            self.direction.x = 0
+            self.speed = self.normal_speed
+
+        #Vertical Movement
+        # if keys[pygame.K_w]:
+        #     self.direction.y = -1
+        # elif keys[pygame.K_s]:
+        #     self.direction.y = 1
+        # else:
+        #     self.direction.y = 0
+
+        # #Horizontal Movement
+        # if keys[pygame.K_d]:
+        #     self.direction.x = 1
+        # elif keys[pygame.K_a]:
+        #     self.direction.x = -1
+        # else:
+        #     self.direction.x = 0
+    
+    def regenerate_power (self):
+        self.power += self.power_regen * (1/60)
+        self.power = min(self.power, self.max_power)
     
     def take_damage(self):
         current = pygame.time.get_ticks()
@@ -59,19 +89,24 @@ class Player(pygame.sprite.Sprite):
         current_time = pygame.time.get_ticks()
 
         if current_time - self.last_shot >= self.shoot_cooldown:
-            mouse_screen = pygame.mouse.get_pos()
-
+            if self.power < self.shoot_cost:
+                return
+            
             #World position of mouse
+            mouse_screen = pygame.mouse.get_pos()
             mouse_world = pygame.math.Vector2(mouse_screen) + camere_offset
             player_pos = pygame.math.Vector2(self.rect.center)
             direction = mouse_world - player_pos
 
             if direction.length() != 0:
                 Bullet(self.rect.center, direction, self.bullet_group)
+                self.last_shot = current_time
+                self.power -= self.shoot_cost
 
     def update (self):
         self.player_movement()
         self.rect.center += (self.direction * self.speed)
+        self.regenerate_power()
 
 class Obstacle (pygame.sprite.Sprite):
     def __init__(self, pos, group):
@@ -376,6 +411,19 @@ class Game:
             (x, y, width * ratio, height)
         )
 
+    def draw_power_core(self, x, y, width, height):
+        ratio = self.player.power / self.player.max_power
+
+        pygame.draw.rect(self.screen, (60, 60, 60), (x, y, width, height))
+        pygame.draw.rect(
+            self.screen,
+            (50, 180, 255),
+            (x, y, width * ratio, height)
+        )
+
+        label = self.font_s.render(None, True, (255, 255, 255))
+        self.screen.blit(label, (x, y - 22))
+        
     def draw_scoreboard(self):
         overlay = pygame.Surface(self.screen.get_size())
         overlay.set_alpha(200)
@@ -432,9 +480,10 @@ class Game:
         
         #For Health bar
         self.draw_health_bar(20, 20, 200, 20)
+        self.draw_power_core(20, 55, 200, 18)
         
         score_surf = self.font_s.render(f"Score: {self.score}", True, (255, 255, 255))
-        self.screen.blit(score_surf, (20, 50))
+        self.screen.blit(score_surf, (20, 85))
 
         if self.state == PLAYING:
             remaining = self.update_timer()
@@ -443,7 +492,7 @@ class Game:
                 True,
                 (255, 255, 255)
             )
-            self.screen.blit(timer_surf, (20, 90))
+            self.screen.blit(timer_surf, (20, 115))
         
         if self.state == SCOREBOARD:
             self.draw_scoreboard()
