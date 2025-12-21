@@ -6,6 +6,7 @@ from random import randint
 PLAYING = "playing"
 PAUSED = "paused"
 SCOREBOARD = "scoreboard"
+MENU = "menu"
 
 class Player(pygame.sprite.Sprite):
     def __init__(self, pos, group, bullet_group):
@@ -121,6 +122,32 @@ class Camera (pygame.sprite.Group):
             offset_pos = sprite.rect.topleft - self.offset
             self.surface.blit(sprite.image, offset_pos)
 
+class Button:
+    def __init__(self, text, pos, size, font, bg_color, text_color):
+        self.text = text
+        self.rect = pygame.Rect(pos, size)
+        self.font = font
+        self.bg_color = bg_color
+        self.text_color = text_color
+
+    def draw (self, surface):
+        mouse_pos = pygame.mouse.get_pos()
+        color = self.bg_color
+
+        if self.rect.collidepoint(mouse_pos):
+            color = (min(color[0] + 40, 255), min(color[1] + 40, 255), min(color[2] + 40, 255))
+        
+        pygame.draw.rect(surface, color, self.rect, border_radius=8)
+
+        text_surf = self.font.render(self.text, True, self.text_color)
+        surface.blit(text_surf, text_surf.get_rect(center = self.rect.center))
+
+    def is_clicked (self, event):
+        return (event.type == pygame.MOUSEBUTTONDOWN
+                and event.button ==1
+                and self.rect.collidepoint(event.pos)
+        )
+
 class Game:
     def __init__(self):
         #Initialization
@@ -148,8 +175,55 @@ class Game:
         self.font_s = pygame.font.Font (None, 36)
 
         #Current state of game status
-        self.state = PLAYING
+        self.state = MENU
+
+        #Start menu buttons
+        self.play_button = Button(
+            "Solo",
+            (600, 420),
+            (300, 60),
+            self.font_s,
+            (50, 150, 255),
+            (255, 255, 255)
+        )
+
+        self.multi_button = Button(
+            "Multiplayer",
+            (600, 500),
+            (300, 60),
+            self.font_s,
+            (120, 120, 120),
+            (255, 255, 255)
+        )
     
+        self.quit_button = Button(
+            "Quit",
+            (600, 580),
+            (300, 60),
+            self.font_s,
+            (200, 60, 60),
+            (255, 255, 255)
+        )
+
+        #Pause menu buttons
+        self.resume_button = Button(
+            "Resume",
+            (600, 450),
+            (300, 60),
+            self.font_s,
+            (50, 180, 120),
+            (255, 255, 255)
+        )
+
+        self.pause_quit_button = Button(
+            "Quit to Menu",
+            (600, 530),
+            (300, 60),
+            self.font_s,
+            (200, 60, 60),
+            (255, 255, 255)
+        )
+
     def reset_game(self):
         self.score = 0
         self.player.health = 5
@@ -194,6 +268,22 @@ class Game:
             if event.type == pygame.QUIT: 
                 self.running = False
             
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if self.state == MENU:
+                    if self.play_button.is_clicked(event):
+                        self.reset_game()
+                        self.state = PLAYING
+                    elif self.multi_button.is_clicked(event):
+                        print("Multiplayer coming soon")
+                    elif self.quit_button.is_clicked(event):
+                        self.running = False
+                
+                elif self.state == PAUSED:
+                    if self.resume_button.is_clicked(event):
+                        self.state = PLAYING
+                    elif self.pause_quit_button.is_clicked(event):
+                        self.state = MENU
+
             if event.type == pygame.KEYDOWN:
 
                 #Toggling Pause
@@ -204,20 +294,19 @@ class Game:
                         self.state = PLAYING
 
                 if self.state == PAUSED:
-                    if event.key == pygame.K_r:
+                    if self.resume_button.is_clicked(event):
                         self.state = PLAYING
-                    elif event.key == pygame.K_q:
-                        self.running = False
+                        self.state = PLAYING
+                    elif self.pause_quit_button.is_clicked(event):
+                        self.running = MENU
 
                 if event.key == pygame.K_RETURN and self.state == SCOREBOARD:
                     self.reset_game()
-                    self.state = PLAYING
-                    self.score = 0
-                    self.player.health = 5
+                    self.state = MENU
                 
-                if self.state == PLAYING:
-                    if event.key == pygame.K_SPACE:
+                if self.state == PLAYING and event.key == pygame.K_SPACE:
                         self.player.player_shooting(self.camera_group.offset)
+            
 
     def update(self):
         if self.state == PLAYING:
@@ -248,14 +337,27 @@ class Game:
         self.screen.blit(overlay, (0, 0))
 
         title = self.font_b.render("PAUSED", True, (255, 255, 255))
-        resume = self.font_s.render("R - Resume Game", True, (255, 255, 255))
-        quit_game = self.font_s.render("Q - Exit Game", True, (255, 255, 255))
-
         self.screen.blit(title, title.get_rect(center=(750, 350)))
-        self.screen.blit(resume, resume.get_rect(center=(750, 450)))
-        self.screen.blit(quit_game, quit_game.get_rect(center=(750, 500)))
+
+        self.resume_button.draw(self.screen)
+        self.pause_quit_button.draw(self.screen)
+    
+    def draw_start_menu(self):
+        self.screen.fill((10, 10, 20))
+
+        title = self.font_b.render("SUBNAUTIC SHOOTER", True, (255, 255, 255))
+        self.screen.blit(title, title.get_rect(center=(750, 300)))
+
+        self.play_button.draw(self.screen)
+        self.multi_button.draw(self.screen)
+        self.quit_button.draw(self.screen)
 
     def draw(self):
+        if self.state == MENU:
+            self.draw_start_menu()
+            pygame.display.update()
+            return
+        
         self.screen.fill((0, 0, 0))
         self.camera_group.custom(self.player)
 
