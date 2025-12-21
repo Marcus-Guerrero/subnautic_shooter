@@ -19,7 +19,8 @@ class Player(pygame.sprite.Sprite):
         self.speed = 5
 
         #Health System
-        self.health = 5
+        self.max_health = 5
+        self.health = self.max_health
         self.last_hit_time = 0
         self.hit_cooldown = 1000
 
@@ -174,6 +175,10 @@ class Game:
         self.font_b = pygame.font.Font(None, 70)
         self.font_s = pygame.font.Font (None, 36)
 
+        #Round Timer
+        self.round_time = 120
+        self.round_start_time = 0
+
         #Current state of game status
         self.state = MENU
 
@@ -224,6 +229,25 @@ class Game:
             (255, 255, 255)
         )
 
+        #Replaying and ending round
+        self.replay_button = Button(
+            "Play Again",
+            (600, 520),
+            (300, 60),
+            self.font_s,
+            (50, 150, 255),
+            (255, 255, 255)
+        )
+
+        self.end_button = Button(
+            "End Game",
+            (600, 600),
+            (300, 60),
+            self.font_s,
+            (200, 60, 60),
+            (255, 255, 255)
+        )
+
     def reset_game(self):
         self.score = 0
         self.player.health = 5
@@ -238,6 +262,15 @@ class Game:
 
         #Spawn enemies again
         self.spawn_enemies(25)
+
+        #Starting timer
+        self.round_start_time = pygame.time.get_ticks()
+    
+    def end_round(self):
+        self.scores.append(self.score)
+        self.scores.sort(reverse = True)
+        self.scores = self.scores[:self.max_scores]
+        self.state = SCOREBOARD
 
     def spawn_enemies(self, amount = 25):
         for obs in range(amount):
@@ -269,7 +302,15 @@ class Game:
                 self.running = False
             
             if event.type == pygame.MOUSEBUTTONDOWN:
-                if self.state == MENU:
+
+                if self.state == SCOREBOARD:
+                    if self.replay_button.is_clicked(event):
+                        self.reset_game()
+                        self.state = PLAYING
+                    elif self.end_button.is_clicked(event):
+                        self.running = False
+
+                elif self.state == MENU:
                     if self.play_button.is_clicked(event):
                         self.reset_game()
                         self.state = PLAYING
@@ -313,7 +354,28 @@ class Game:
             self.camera_group.update()
             self.bullet_group.update()
             self.collision_handling()
+
+            #Updating timer once
+            self.remaining_time = self.update_timer()
     
+    def update_timer(self):
+        elapsed = (pygame.time.get_ticks() - self.round_start_time) // 1000
+        remaining = max(0, self.round_time - elapsed) 
+
+        if remaining <= 0:
+            self.end_round()
+        
+        return remaining
+    
+    def draw_health_bar(self, x, y, width, height):
+        ratio = self.player.health / self.player.max_health
+        pygame.draw.rect(self.screen, (100, 100, 100), (x, y, width, height))
+        pygame.draw.rect(
+            self.screen,
+            (200, 50, 50),
+            (x, y, width * ratio, height)
+        )
+
     def draw_scoreboard(self):
         overlay = pygame.Surface(self.screen.get_size())
         overlay.set_alpha(200)
@@ -329,6 +391,9 @@ class Game:
 
         hint = self.font_s.render("Please ENTER to close", True, (180, 180, 180))
         self.screen.blit(hint, hint.get_rect(center= (750, 550)))
+
+        self.replay_button.draw(self.screen)
+        self.end_button.draw(self.screen)
     
     def draw_paused_menu (self):
         overlay = pygame.Surface(self.screen.get_size())
@@ -365,9 +430,21 @@ class Game:
             offset_pos = bullet.rect.topleft - self.camera_group.offset
             self.screen.blit(bullet.image, offset_pos)
         
+        #For Health bar
+        self.draw_health_bar(20, 20, 200, 20)
+        
         score_surf = self.font_s.render(f"Score: {self.score}", True, (255, 255, 255))
-        self.screen.blit(score_surf, (20, 20))
+        self.screen.blit(score_surf, (20, 50))
 
+        if self.state == PLAYING:
+            remaining = self.update_timer()
+            timer_surf = self.font_s.render(
+                f"TIme: {remaining // 60:02}:{remaining % 60:02}",
+                True,
+                (255, 255, 255)
+            )
+            self.screen.blit(timer_surf, (20, 90))
+        
         if self.state == SCOREBOARD:
             self.draw_scoreboard()
         elif self.state == PAUSED:
