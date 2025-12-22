@@ -32,7 +32,7 @@ class Player(pygame.sprite.Sprite):
         #Power Core
         self.max_power = 100
         self.power = self.max_power
-        self.power_regen = 10
+        self.power_regen = 15
         self.boost_drain = 30
         self.shoot_cost = 20
 
@@ -57,7 +57,6 @@ class Player(pygame.sprite.Sprite):
             self.power -= self.boost_drain * (1/60)
         else:
             self.speed = self.normal_speed
-
 
     def regenerate_power (self):
         self.power += self.power_regen * (1/60)
@@ -190,6 +189,7 @@ class Game:
         #Score board
         self.score = 0
         self.scores = []
+        self.scoreboard_time = 0
         self.max_scores =5
         self.show_scoreboard = False
         self.font_b = pygame.font.Font(None, 70)
@@ -198,6 +198,16 @@ class Game:
         #Round Timer
         self.round_time = 120
         self.round_start_time = 0
+
+        #Number of rounds
+        self.current_round = 1
+        self.max_rounds = 5
+        self.round_over = False
+        self.final_round = False
+
+        #XP system
+        self.xp_per_enemy = 25
+        self.kills = 0
 
         #Current state of game status
         self.state = MENU
@@ -252,7 +262,7 @@ class Game:
         #Replaying and ending round
         self.replay_button = Button(
             "Play Again",
-            (600, 520),
+            (600, 620),
             (300, 60),
             self.font_s,
             (50, 150, 255),
@@ -261,7 +271,7 @@ class Game:
 
         self.end_button = Button(
             "End Game",
-            (600, 600),
+            (600, 700),
             (300, 60),
             self.font_s,
             (200, 60, 60),
@@ -271,6 +281,8 @@ class Game:
     def reset_game(self):
         self.score = 0
         self.player.health = 5
+        self.kills = 0
+        self.round_over = False
 
         #Clearing all entities
         self.bullet_group.empty()
@@ -287,10 +299,29 @@ class Game:
         self.round_start_time = pygame.time.get_ticks()
     
     def end_round(self):
-        self.scores.append(self.score)
-        self.scores.sort(reverse = True)
+        if self.round_over:
+            return
+        
+        self.round_over = True
+
+        self.scores.append({
+            "xp": self.score,
+            "kills": self.kills
+        })
+        self.scores.sort(
+            key =lambda s: (s["xp"], s["kills"]),
+            reverse = True
+        )
         self.scores = self.scores[:self.max_scores]
-        self.state = SCOREBOARD
+
+        if self.current_round >= self.max_rounds:
+            self.final_round = True
+            self.state = SCOREBOARD
+            self.scoreboard_time = pygame.time.get_ticks()
+        else:
+            self.final_round = False
+            self.current_round += 1
+            self.state = SCOREBOARD
 
     def spawn_enemies(self, amount = 25):
         for obs in range(amount):
@@ -308,13 +339,13 @@ class Game:
             hit_obstacles = pygame.sprite.spritecollide(bullet,self.obstacle_group, True)
             if hit_obstacles:
                 bullet.kill()
-                self.score += len(hit_obstacles)
+                self.kills += len(hit_obstacles)
+                self.score += len(hit_obstacles) *self.xp_per_enemy
         
         if self.player.health <= 0:
-            self.scores.append(self.score)
-            self.scores.sort(reverse = True)
-            self.scores = self.scores[:self.max_scores]
-            self.state = SCOREBOARD
+            self.end_round()
+            # self.scores.sort(reverse = True)
+            # self.scores = self.scores[:self.max_scores]
 
     def handling_events(self):
         for event in pygame.event.get(): 
@@ -415,15 +446,28 @@ class Game:
         overlay.fill((0, 0, 0))
         self.screen.blit(overlay, (0, 0))
 
-        title= self.font_b.render("HIGHSCORE", True, (255, 255, 255))
+        title= self.font_b.render("FINAL RESULTS", True, (255, 255, 255))
         self.screen.blit(title, title.get_rect(center= (750, 200)))
 
-        for i, score in enumerate(self.scores):
-            text = self.font_s.render(f"{i + 1}. {score}", True, (255, 255, 255))
-            self.screen.blit(text, (650, 300 + i * 50))
+        for i, entry in enumerate(self.scores):
+            text = self.font_s.render(
+                f"{i + 1}. XP: {entry['xp']} | Kills: {entry['kills']}", 
+                True, 
+                (255, 255, 255)
+            )
+            self.screen.blit(text, (550, 300 + i * 50))
 
-        hint = self.font_s.render("Please ENTER to close", True, (180, 180, 180))
-        self.screen.blit(hint, hint.get_rect(center= (750, 550)))
+        if self.final_round:
+            hint = self.font_s.render("Game complete! Returning to menu...", 
+                                      True, 
+                                      (200, 200, 200))
+            self.screen.blit(hint, hint.get_rect(center= (750, 560)))
+            
+            if pygame.time.get_ticks() - self.scoreboard_time > 2500:
+                self.current_round = 1
+                self.final_round = False
+                self.stete = MENU
+                return
 
         self.replay_button.draw(self.screen)
         self.end_button.draw(self.screen)
@@ -467,17 +511,23 @@ class Game:
         self.draw_health_bar(20, 20, 200, 20)
         self.draw_power_core(20, 55, 200, 18)
         
-        score_surf = self.font_s.render(f"Score: {self.score}", True, (255, 255, 255))
+        score_surf = self.font_s.render(f"Score: {self.score}", True, (0, 0, 0))
         self.screen.blit(score_surf, (20, 85))
 
         if self.state == PLAYING:
-            remaining = self.update_timer()
             timer_surf = self.font_s.render(
-                f"TIme: {remaining // 60:02}:{remaining % 60:02}",
+                f"TIme: {self.remaining_time // 60:02}:{self.remaining_time % 60:02}",
                 True,
-                (255, 255, 255)
+                (0, 0, 0)
             )
             self.screen.blit(timer_surf, (20, 115))
+        
+        round_surf = self.font_s.render(
+            f"Round: {self.current_round}/{self.max_rounds}",
+            True,
+            (0, 0, 0)
+        )
+        self.screen.blit(round_surf, (20, 145))
         
         if self.state == SCOREBOARD:
             self.draw_scoreboard()
