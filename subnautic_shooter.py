@@ -50,6 +50,16 @@ class Player(pygame.sprite.Sprite):
         self.normal_speed = 5
         self.boost_speed = 9
 
+        #Level Up System
+        self.level = 1
+        self.max_level = 5
+        self.xp = 0
+        self.xp_to_next = [0, 50, 100, 150, 200, float("inf")]
+
+        #Damage Scaling
+        self.base_damage = 1
+        self.damage = self.base_damage
+
     def player_movement(self):
         keys = pygame.key.get_pressed()
 
@@ -96,6 +106,25 @@ class Player(pygame.sprite.Sprite):
                 Bullet(self.rect.center, direction, self.bullet_group)
                 self.last_shot = current_time
                 self.power -= self.shoot_cost
+    
+    def add_xp (self, amount):
+        if self.level >= self.max_level:
+            return
+        
+        self.xp += amount
+
+        if self.xp >= self.xp_to_next[self.level] and self.level < self.max_level:
+            self.xp -= self.xp_to_next[self.level]
+            self.level_up()
+    
+    def level_up(self):
+        self.level += 1
+        self.damage += 1
+
+        print(f"LEVEL UP! Level {self.level}, Damage {self.damage}")
+
+        if self.level == self.max_level:
+            print("MAX LEVEL! One-hit kills unlocked.")
 
     def update (self):
         self.player_movement()
@@ -108,6 +137,10 @@ class Obstacle (pygame.sprite.Sprite):
         self.image = pygame.image.load("graphics/Fly1.png").convert_alpha()
         self.rect = self.image.get_rect(center= pos)
         self.player = player
+
+        #Health System
+        self.max_health = 2 + player.level
+        self.health = self.max_health
 
         #Basic Random Movement
         self.speed = randint (1, 3)
@@ -145,6 +178,36 @@ class Obstacle (pygame.sprite.Sprite):
             direction = direction.normalize()
         
         self.rect.center += direction * (self.speed + 1)
+
+    def take_damage (self, amount = 1):
+        self.health -= amount
+        if self.health <= 0:
+            self.kill()
+            return True
+        return False
+
+    def draw_health_bar (self, surface, offset):
+        bar_width = 30
+        bar_height = 5
+        ratio = self.health / self.max_health
+
+        #Position above enemy
+        bar_x = self.rect.centerx - bar_width // 2 - offset.x
+        bar_y = self.rect.top - 10 - offset.y
+
+        #Background
+        pygame.draw.rect(
+            surface,
+            (80, 80, 80),
+            (bar_x, bar_y, bar_width, bar_height)
+        )
+
+        #Health
+        pygame.draw.rect(
+            surface,
+            (200, 50, 50),
+            (bar_x, bar_y, bar_width * ratio, bar_height)
+        )
 
     def update(self):
         #Move toward player
@@ -276,7 +339,7 @@ class Game:
         self.final_round = False
 
         #XP system
-        self.xp_per_enemy = 25
+        self.xp_per_enemy = 20
         self.kills = 0
 
         #Current state of game status
@@ -375,11 +438,11 @@ class Game:
         self.round_over = True
 
         self.scores.append({
-            "xp": self.score,
-            "kills": self.kills
+            "kills": self.kills,
+            "level": self.player.level
         })
         self.scores.sort(
-            key =lambda s: (s["xp"], s["kills"]),
+            key =lambda s: (s["kills"], s["level"]),
             reverse = True
         )
         self.scores = self.scores[:self.max_scores]
@@ -410,11 +473,18 @@ class Game:
 
         #Bullet collision
         for bullet in self.bullet_group:
-            hit_obstacles = pygame.sprite.spritecollide(bullet,self.obstacle_group, True)
-            if hit_obstacles:
+            hit_enemies = pygame.sprite.spritecollide(bullet,self.obstacle_group, False)
+
+            if hit_enemies:
                 bullet.kill()
-                self.kills += len(hit_obstacles)
-                self.score += len(hit_obstacles) *self.xp_per_enemy
+
+                for enemy in hit_enemies:
+                    died = enemy.take_damage(self.player.damage)
+
+                    if died:
+                        self.kills += 1
+                        self.score = self.kills
+                        self.player.add_xp(self.xp_per_enemy)
         
         if self.player.health <= 0:
             self.end_round()
@@ -525,7 +595,7 @@ class Game:
 
         for i, entry in enumerate(self.scores):
             text = self.font_s.render(
-                f"{i + 1}. XP: {entry['xp']} | Kills: {entry['kills']}", 
+                f"{i + 1}. Kills: {entry['kills']} | Level: {entry['level']}", 
                 True, 
                 (255, 255, 255)
             )
@@ -577,16 +647,32 @@ class Game:
         self.screen.fill((0, 0, 0))
         self.camera_group.custom(self.player)
 
+        for enemy in self.obstacle_group:
+            enemy.draw_health_bar(self.screen, self.camera_group.offset)
+
         for bullet in self.bullet_group:
             offset_pos = bullet.rect.topleft - self.camera_group.offset
             self.screen.blit(bullet.image, offset_pos)
         
         #For Health bar
-        self.draw_health_bar(20, 20, 200, 20)
-        self.draw_power_core(20, 55, 200, 18)
+        self.draw_health_bar(20, 20, 200, 18)
+
+        #For power bar
+        self.draw_power_core(20, 55, 200, 14)
+
+        if self.player.level < self.player.max_level:
+            xp_ratio = self.player.xp / self.player.xp_to_next[self.player.level]
+        else:
+            xp_ratio = 1
+
+        pygame.draw.rect(self.screen, (80, 80, 80), (20, 70, 200, 10))
+        pygame.draw.rect(self.screen, (120, 200, 120), (20, 70, 200 * xp_ratio, 10))
+
+        level_surf = self.font_s.render(f"Level: {self.player.level}", True, (0, 0, 0))
+        self.screen.blit(level_surf, (20, 85))
         
         score_surf = self.font_s.render(f"Score: {self.score}", True, (0, 0, 0))
-        self.screen.blit(score_surf, (20, 85))
+        self.screen.blit(score_surf, (20, 110))
 
         if self.state == PLAYING:
             timer_surf = self.font_s.render(
@@ -594,14 +680,14 @@ class Game:
                 True,
                 (0, 0, 0)
             )
-            self.screen.blit(timer_surf, (20, 115))
+            self.screen.blit(timer_surf, (20, 135))
         
         round_surf = self.font_s.render(
             f"Round: {self.current_round}/{self.max_rounds}",
             True,
             (0, 0, 0)
         )
-        self.screen.blit(round_surf, (20, 145))
+        self.screen.blit(round_surf, (20, 160))
         
         if self.state == SCOREBOARD:
             self.draw_scoreboard()
