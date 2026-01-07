@@ -8,6 +8,16 @@ PAUSED = "paused"
 SCOREBOARD = "scoreboard"
 MENU = "menu"
 
+#World Boundaries
+WORLD_LEFT = -1824
+WORLD_RIGHT = 1824
+WORLD_TOP = -1600
+WORLD_BOTTOM = 1600
+
+#Detection Range of enemies
+DETECTION_RANGE = 350
+LOSE_INTEREST_RANGE = 450
+
 class Player(pygame.sprite.Sprite):
     def __init__(self, pos, group, bullet_group):
         super().__init__(group)
@@ -93,10 +103,70 @@ class Player(pygame.sprite.Sprite):
         self.regenerate_power()
 
 class Obstacle (pygame.sprite.Sprite):
-    def __init__(self, pos, group):
+    def __init__(self, pos, group, player):
         super().__init__(group)
         self.image = pygame.image.load("graphics/Fly1.png").convert_alpha()
         self.rect = self.image.get_rect(center= pos)
+        self.player = player
+
+        #Basic Random Movement
+        self.speed = randint (1, 3)
+        self.direction = pygame.math.Vector2(
+            randint(-100, 100),
+            randint (-100, 100)
+        )
+
+        if self.direction.length() != 0:
+            self.direction = self.direction.normalize()
+
+        #Current AI state
+        self.state = "wander"
+        self.change_dir_time = pygame.time.get_ticks()
+    
+    def wander(self):
+        #Random movement
+        if pygame.time.get_ticks() - self.change_dir_time > 2000:
+            self.direction = pygame.math.Vector2(
+                randint(-100, 100),
+                randint(-100, 100)
+            )
+            if self.direction.length() != 0:
+                self.direction = self.direction.normalize()
+            self.change_dir_time = pygame.time.get_ticks()
+        
+        self.rect.center += self.direction * self.speed
+    
+    def chase(self):
+        player_pos = pygame.math.Vector2(self.player.rect.center)
+        enemy_pos = pygame.math.Vector2(self.rect.center)
+
+        direction = player_pos - enemy_pos
+        if direction.length() != 0:
+            direction = direction.normalize()
+        
+        self.rect.center += direction * (self.speed + 1)
+
+    def update(self):
+        #Move toward player
+        player_pos = pygame.math.Vector2(self.player.rect.center)
+        enemy_pos = pygame.math.Vector2(self.rect.center)
+        distance = player_pos.distance_to(enemy_pos)
+
+        #State transition
+        if self.state == "wander" and distance <= DETECTION_RANGE:
+            self.state = "chase"
+        elif self.state == "chase" and distance >= LOSE_INTEREST_RANGE:
+            self.state = "wander"
+        
+        #Executing behavior
+        if self.state == "wander":
+            self.wander()
+        elif self.state == "chase":
+            self.chase()
+
+        #keeping enemies inside the world
+        self.rect.centerx = max(WORLD_LEFT, min(self.rect.centerx, WORLD_RIGHT))
+        self.rect.centery = max(WORLD_TOP, min(self.rect.centery, WORLD_BOTTOM))
 
 class Bullet(pygame.sprite.Sprite):
     def __init__(self, pos, direction, group):
@@ -327,7 +397,11 @@ class Game:
         for obs in range(amount):
             random_x = randint(-1824, 1824)
             random_y = randint(-1600, 1600)
-            Obstacle((random_x, random_y), [self.camera_group, self.obstacle_group])
+            Obstacle(
+                (random_x, random_y), 
+                [self.camera_group, self.obstacle_group],
+                self.player
+            )
 
     def collision_handling(self):
         #Player collision
