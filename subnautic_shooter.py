@@ -136,6 +136,9 @@ class Obstacle (pygame.sprite.Sprite):
         super().__init__(group)
         self.image = pygame.image.load("graphics/Fly1.png").convert_alpha()
         self.rect = self.image.get_rect(center= pos)
+        self.base_image = self.image.copy()
+        self.alpha = 255
+        
         self.player = player
 
         #Health System
@@ -187,6 +190,9 @@ class Obstacle (pygame.sprite.Sprite):
         return False
 
     def draw_health_bar (self, surface, offset):
+        if self.alpha <=40:
+            return
+        
         bar_width = 30
         bar_height = 5
         ratio = self.health / self.max_health
@@ -208,6 +214,20 @@ class Obstacle (pygame.sprite.Sprite):
             (200, 50, 50),
             (bar_x, bar_y, bar_width * ratio, bar_height)
         )
+    
+    def update_visibility (self, player, fog_radius, visible_radius):
+        distance = pygame.math.Vector2(self.rect.center).distance_to(player.rect.center)
+
+        if distance <= visible_radius:
+            self.alpha = 255
+        elif distance >= fog_radius:
+            self.alpha = 0
+        else:
+            ratio = 1 - (distance - visible_radius) / (fog_radius - visible_radius)
+            self.alpha = int(255 * ratio)
+        
+        self.image = self.base_image.copy()
+        self.image.set_alpha(self.alpha)
 
     def update(self):
         #Move toward player
@@ -341,6 +361,11 @@ class Game:
         #XP system
         self.xp_per_enemy = 20
         self.kills = 0
+
+        #Fog of war
+        self.fog_surface = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        self.visibility_radius = 220
+        self.fog_radius = 380
 
         #Current state of game status
         self.state = MENU
@@ -550,6 +575,13 @@ class Game:
             self.bullet_group.update()
             self.collision_handling()
 
+            for enemy in self.obstacle_group:
+                enemy.update_visibility(
+                    self.player,
+                    self.fog_radius,
+                    self.visibility_radius
+                )
+
             #Updating timer once
             self.remaining_time = self.update_timer()
     
@@ -583,6 +615,34 @@ class Game:
 
         label = self.font_s.render(None, True, (255, 255, 255))
         self.screen.blit(label, (x, y - 22))
+    
+    def draw_fog (self):
+        self.fog_surface.fill((0, 0, 0, 180))
+
+        #Player screen position
+        player_screen_pos = self.player.rect.center - self.camera_group.offset
+
+        #Create gradient visibility
+        for radius in range (self.fog_radius, self.visibility_radius, -6):
+            alpha = int(180 * (radius - self.visibility_radius) / (self.fog_radius - self.visibility_radius))
+            alpha = max(0, min(180, alpha))
+
+            pygame.draw.circle(
+                self.fog_surface,
+                (0, 0, 0, alpha),
+                player_screen_pos,
+                radius
+            )
+
+        #Fully clear center
+        pygame.draw.circle(
+            self.fog_surface,
+            (0, 0, 0, 0),
+            player_screen_pos,
+            self.visibility_radius
+        )
+
+        self.screen.blit(self.fog_surface, (0, 0))
         
     def draw_scoreboard(self):
         overlay = pygame.Surface(self.screen.get_size())
@@ -654,6 +714,9 @@ class Game:
             offset_pos = bullet.rect.topleft - self.camera_group.offset
             self.screen.blit(bullet.image, offset_pos)
         
+        if self.state == PLAYING:
+            self.draw_fog()
+        
         #For Health bar
         self.draw_health_bar(20, 20, 200, 18)
 
@@ -676,7 +739,7 @@ class Game:
 
         if self.state == PLAYING:
             timer_surf = self.font_s.render(
-                f"TIme: {self.remaining_time // 60:02}:{self.remaining_time % 60:02}",
+                f"Time: {self.remaining_time // 60:02}:{self.remaining_time % 60:02}",
                 True,
                 (0, 0, 0)
             )
