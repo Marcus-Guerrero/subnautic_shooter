@@ -215,7 +215,13 @@ class Obstacle (pygame.sprite.Sprite):
             (bar_x, bar_y, bar_width * ratio, bar_height)
         )
     
-    def update_visibility (self, player, fog_radius, visible_radius):
+    def update_visibility (self, player, fog_radius, visible_radius, sonar_active = False):
+        if sonar_active:
+            self.alpha = 25
+            self.image = self.base_image.copy()
+            self.image.set_alpha (self.alpha)
+        
+        #Normal visibility logic
         distance = pygame.math.Vector2(self.rect.center).distance_to(player.rect.center)
 
         if distance <= visible_radius:
@@ -366,6 +372,15 @@ class Game:
         self.fog_surface = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
         self.visibility_radius = 220
         self.fog_radius = 380
+
+        #Sonar System
+        self.sonar_active = False
+        self.sonar_duration = 3.5
+        self.sonar_start_time = 0
+        self.sonar_cost = 40
+        #Sonar cooldown
+        self.sonar_cooldown = 6.0
+        self.last_sonar_time = -9999
 
         #Current state of game status
         self.state = MENU
@@ -567,7 +582,20 @@ class Game:
                 
                 if self.state == PLAYING and event.key == pygame.K_SPACE:
                         self.player.player_shooting(self.camera_group.offset)
-            
+                
+                if self.state == PLAYING and event.key == pygame.K_q:
+                    current = pygame.time.get_ticks()
+
+                    cooldown_ready = (
+                        (current - self.last_sonar_time) / 1000
+                        >= self.sonar_cooldown
+                    )
+
+                    if cooldown_ready and not self.sonar_active and self.player.power >= self.sonar_cost:
+                        self.player.power -= self.sonar_cooldown
+                        self.sonar_active = True
+                        self.sonar_start_time = current
+                        self.last_sonar_time = current
 
     def update(self):
         if self.state == PLAYING:
@@ -579,11 +607,17 @@ class Game:
                 enemy.update_visibility(
                     self.player,
                     self.fog_radius,
-                    self.visibility_radius
+                    self.visibility_radius,
+                    self.sonar_active
                 )
 
             #Updating timer once
             self.remaining_time = self.update_timer()
+        
+        if self.sonar_active:
+            elapsed = (pygame.time.get_ticks() - self.sonar_start_time) / 1000
+            if elapsed >= self.sonar_duration:
+                self.sonar_active = False
     
     def update_timer(self):
         elapsed = (pygame.time.get_ticks() - self.round_start_time) // 1000
@@ -714,43 +748,79 @@ class Game:
             offset_pos = bullet.rect.topleft - self.camera_group.offset
             self.screen.blit(bullet.image, offset_pos)
         
-        if self.state == PLAYING:
+        if self.state == PLAYING and not self.sonar_active:
             self.draw_fog()
+
+        #UI positioning
+        ui_x = 20
+        ui_y = 20
+        gap = 6
         
         #For Health bar
-        self.draw_health_bar(20, 20, 200, 18)
+        self.draw_health_bar(ui_x, ui_y, 200, 18)
+        ui_y += 18 + gap
 
         #For power bar
-        self.draw_power_core(20, 55, 200, 14)
+        self.draw_power_core(ui_x, ui_y, 200, 14)
+        ui_y += 14 + gap
 
+        # XP bar
         if self.player.level < self.player.max_level:
             xp_ratio = self.player.xp / self.player.xp_to_next[self.player.level]
         else:
             xp_ratio = 1
 
-        pygame.draw.rect(self.screen, (80, 80, 80), (20, 70, 200, 10))
-        pygame.draw.rect(self.screen, (120, 200, 120), (20, 70, 200 * xp_ratio, 10))
+        pygame.draw.rect(self.screen, (80, 80, 80), (ui_x, ui_y, 200, 10))
+        pygame.draw.rect(self.screen, (120, 200, 120), (ui_x, ui_y, 200 * xp_ratio, 10))
+        ui_y += 10 + gap
 
-        level_surf = self.font_s.render(f"Level: {self.player.level}", True, (0, 0, 0))
-        self.screen.blit(level_surf, (20, 85))
-        
-        score_surf = self.font_s.render(f"Score: {self.score}", True, (0, 0, 0))
-        self.screen.blit(score_surf, (20, 110))
+        # Level
+        level_surf = self.font_s.render(f"Level: {self.player.level}", True, (255, 255, 255))
+        self.screen.blit(level_surf, (ui_x, ui_y))
+        ui_y += level_surf.get_height() + gap
 
+        # Sonar 
+        current = pygame.time.get_ticks()
+        time_since = (current - self.last_sonar_time) / 1000
+        remaining = max(0, self.sonar_cooldown - time_since)
+
+        if self.sonar_active:
+            sonar_text = "SONAR ACTIVE"
+            color = (50, 200, 255)
+        elif remaining <= 0:
+            sonar_text = "SONAR READY"
+            color = (120, 220, 120)
+        else:
+            sonar_text = f"SONAR COOLDOWN: {remaining:.1f}s"
+            color = (200, 200, 200)
+
+        sonar_surf = self.font_s.render(sonar_text, True, color)
+        self.screen.blit(sonar_surf, (ui_x, ui_y))
+        ui_y += sonar_surf.get_height() + gap
+
+        # Score
+        score_surf = self.font_s.render(f"Score: {self.score}", True, (255, 255, 255))
+        self.screen.blit(score_surf, (ui_x, ui_y))
+        ui_y += score_surf.get_height() + gap
+
+        # Timer
         if self.state == PLAYING:
             timer_surf = self.font_s.render(
                 f"Time: {self.remaining_time // 60:02}:{self.remaining_time % 60:02}",
                 True,
-                (0, 0, 0)
+                (255, 255, 255)
             )
-            self.screen.blit(timer_surf, (20, 135))
-        
+            self.screen.blit(timer_surf, (ui_x, ui_y))
+            ui_y += timer_surf.get_height() + gap
+
+        # Round
         round_surf = self.font_s.render(
             f"Round: {self.current_round}/{self.max_rounds}",
             True,
-            (0, 0, 0)
+            (255, 255, 255)
         )
-        self.screen.blit(round_surf, (20, 160))
+        self.screen.blit(round_surf, (ui_x, ui_y))
+        ui_y += round_surf.get_height() + gap
         
         if self.state == SCOREBOARD:
             self.draw_scoreboard()
