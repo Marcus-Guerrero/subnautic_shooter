@@ -18,6 +18,41 @@ WORLD_BOTTOM = 1600
 DETECTION_RANGE = 350
 LOSE_INTEREST_RANGE = 450
 
+#Enemy Types
+ENEMY_TYPES = {
+    "fly": {
+        "hp": 2,
+        "xp": 20,
+        "speed": (1, 3),
+        "image": "graphics/Fly1.png"
+    },
+    "brute": {
+        "hp": 6,
+        "xp": 60,
+        "speed": (1, 2),
+        "image": "graphics/Fly1.png"
+    },
+    "scout": {
+        "hp": 1,
+        "xp": 15,
+        "speed": (3, 5),
+        "image": "graphics/Fly1.png"
+    },
+    "tank": {
+        "hp": 10,
+        "xp": 120,
+        "speed": (1, 1),
+        "image": "graphics/Fly1.png"
+    },
+    "elite": {
+        "hp": 4,
+        "xp": 45,
+        "speed": (2, 4),
+        "image": "graphics/Fly1.png"
+    }
+    
+}
+
 class Player(pygame.sprite.Sprite):
     def __init__(self, pos, group, bullet_group):
         super().__init__(group)
@@ -54,7 +89,7 @@ class Player(pygame.sprite.Sprite):
         self.level = 1
         self.max_level = 5
         self.xp = 0
-        self.xp_to_next = [0, 50, 100, 150, 200, float("inf")]
+        
 
         #Damage Scaling
         self.base_damage = 1
@@ -107,14 +142,19 @@ class Player(pygame.sprite.Sprite):
                 self.last_shot = current_time
                 self.power -= self.shoot_cost
     
+    def xp_needed (self):
+        base = 50
+        growth = 1.5
+        return int(base * (self.level ** growth))
+    
     def add_xp (self, amount):
         if self.level >= self.max_level:
             return
         
         self.xp += amount
 
-        if self.xp >= self.xp_to_next[self.level] and self.level < self.max_level:
-            self.xp -= self.xp_to_next[self.level]
+        if self.xp >= self.xp_needed() and self.level < self.max_level:
+            self.xp -= self.xp_needed()
             self.level_up()
     
     def level_up(self):
@@ -132,21 +172,28 @@ class Player(pygame.sprite.Sprite):
         self.regenerate_power()
 
 class Obstacle (pygame.sprite.Sprite):
-    def __init__(self, pos, group, player):
+    def __init__(self, pos, group, player, enemy_type = "fly"):
         super().__init__(group)
-        self.image = pygame.image.load("graphics/Fly1.png").convert_alpha()
-        self.rect = self.image.get_rect(center= pos)
+
+        #Dictionary of different enemy types
+        data = ENEMY_TYPES[enemy_type]
+
+        #Loading enemy image
+        self.image = pygame.image.load(data["image"]).convert_alpha()
         self.base_image = self.image.copy()
+        self.rect = self.image.get_rect(center= pos)
         self.alpha = 255
         
         self.player = player
+        self.enemy_type = enemy_type
+        self.xp_reward = data["xp"]
 
         #Health System
-        self.max_health = 2 + player.level
+        self.max_health = data["hp"] + player.level // 2
         self.health = self.max_health
 
         #Basic Random Movement
-        self.speed = randint (1, 3)
+        self.speed = randint (*data["speed"])
         self.direction = pygame.math.Vector2(
             randint(-100, 100),
             randint (-100, 100)
@@ -497,13 +544,16 @@ class Game:
             self.state = SCOREBOARD
 
     def spawn_enemies(self, amount = 25):
-        for obs in range(amount):
-            random_x = randint(-1824, 1824)
-            random_y = randint(-1600, 1600)
+        types = list(ENEMY_TYPES.keys())
+
+        for e in range (amount):
+            enemy_type = randint(0, len(types) - 1)
+
             Obstacle(
-                (random_x, random_y), 
+                (randint(WORLD_LEFT, WORLD_RIGHT), randint(WORLD_TOP, WORLD_BOTTOM)),
                 [self.camera_group, self.obstacle_group],
-                self.player
+                self.player,
+                types[enemy_type]
             )
 
     def collision_handling(self):
@@ -524,7 +574,7 @@ class Game:
                     if died:
                         self.kills += 1
                         self.score = self.kills
-                        self.player.add_xp(self.xp_per_enemy)
+                        self.player.add_xp(enemy.xp_reward)
         
         if self.player.health <= 0:
             self.end_round()
@@ -591,7 +641,12 @@ class Game:
                         >= self.sonar_cooldown
                     )
 
-                    if cooldown_ready and not self.sonar_active and self.player.power >= self.sonar_cost:
+                    if (
+                        self.player.level >=3 and
+                        cooldown_ready and
+                        not self.sonar_active and
+                        self.player.power >= self.sonar_cost
+                    ):
                         self.player.power -= self.sonar_cooldown
                         self.sonar_active = True
                         self.sonar_start_time = current
@@ -766,7 +821,7 @@ class Game:
 
         # XP bar
         if self.player.level < self.player.max_level:
-            xp_ratio = self.player.xp / self.player.xp_to_next[self.player.level]
+            xp_ratio = self.player.xp / self.player.xp_needed()
         else:
             xp_ratio = 1
 
@@ -784,7 +839,10 @@ class Game:
         time_since = (current - self.last_sonar_time) / 1000
         remaining = max(0, self.sonar_cooldown - time_since)
 
-        if self.sonar_active:
+        if self.player.level < 3:
+            sonar_text = "SONAR LOCKED (LVL 3)"
+            color = (120, 120, 120)
+        elif self.sonar_active:
             sonar_text = "SONAR ACTIVE"
             color = (50, 200, 255)
         elif remaining <= 0:
