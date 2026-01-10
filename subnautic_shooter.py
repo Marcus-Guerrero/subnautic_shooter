@@ -1,6 +1,7 @@
 import pygame
 from sys import exit
 from random import randint
+from collections import deque
 
 #Game status
 PLAYING = "playing"
@@ -17,6 +18,9 @@ WORLD_BOTTOM = 1600
 #Detection Range of enemies
 DETECTION_RANGE = 350
 LOSE_INTEREST_RANGE = 450
+
+#RESPAWN RADIUS
+RESPAWN_SAFE_RADIUS = 350
 
 #Enemy Types
 ENEMY_TYPES = {
@@ -56,6 +60,8 @@ ENEMY_TYPES = {
 class Player(pygame.sprite.Sprite):
     def __init__(self, pos, group, bullet_group):
         super().__init__(group)
+
+        self.game = None
 
         #Character rendering
         self.image = pygame.image.load('graphics/player.png').convert_alpha()
@@ -159,7 +165,7 @@ class Player(pygame.sprite.Sprite):
     
     def level_up(self):
         self.level += 1
-        self.damage += 1
+        self.damage = self.base_damage + self.level
 
         print(f"LEVEL UP! Level {self.level}, Damage {self.damage}")
 
@@ -189,7 +195,7 @@ class Obstacle (pygame.sprite.Sprite):
         self.xp_reward = data["xp"]
 
         #Health System
-        self.max_health = data["hp"] + player.level // 2
+        self.max_health = max(1, data["hp"] + player.level // 2)
         self.health = self.max_health
 
         #Basic Random Movement
@@ -263,13 +269,14 @@ class Obstacle (pygame.sprite.Sprite):
         )
     
     def update_visibility (self, player, fog_radius, visible_radius, sonar_active = False):
+        distance = pygame.math.Vector2(self.rect.center).distance_to(player.rect.center)
+        
+        #Override sonar
         if sonar_active:
-            self.alpha = 25
+            self.alpha = 255
             self.image = self.base_image.copy()
             self.image.set_alpha (self.alpha)
-        
-        #Normal visibility logic
-        distance = pygame.math.Vector2(self.rect.center).distance_to(player.rect.center)
+            return
 
         if distance <= visible_radius:
             self.alpha = 255
@@ -283,6 +290,13 @@ class Obstacle (pygame.sprite.Sprite):
         self.image.set_alpha(self.alpha)
 
     def update(self):
+        self.player = self.player.game.player
+        
+        #Kill broken enemies
+        if self.health <= 0:
+            self.kill()
+            return
+        
         #Move toward player
         player_pos = pygame.math.Vector2(self.player.rect.center)
         enemy_pos = pygame.math.Vector2(self.rect.center)
@@ -293,6 +307,15 @@ class Obstacle (pygame.sprite.Sprite):
             self.state = "chase"
         elif self.state == "chase" and distance >= LOSE_INTEREST_RANGE:
             self.state = "wander"
+        
+        #Grace period
+        if not self.player.game:
+            self.wander()
+            return
+        
+        if pygame.time.get_ticks() - self.player.game.last_respawn_time < self.player.game.spawn_protection_time:
+            self.wander()
+            return
         
         #Executing behavior
         if self.state == "wander":
@@ -386,7 +409,25 @@ class Game:
         self.camera_group = Camera()
         self.bullet_group = pygame.sprite.Group()
         self.player = Player((500, 300), self.camera_group, self.bullet_group)
+        self.player.game = self
         self.obstacle_group =pygame.sprite.Group()
+
+        #Respawn points
+        self.respawn_points = deque([
+            pygame.math.Vector2(0, 0),
+            pygame.math.Vector2(800, -400),
+            pygame.math.Vector2(-1200, 600),
+            pygame.math.Vector2(1400, 1000),
+            pygame.math.Vector2(-900, -1200)
+        ])
+
+        #Respawn Delay
+        self.respawn_delay = 2000
+        self.death_time = None
+
+        #Respawn protection
+        self.spawn_protection_time = 1500
+        self.last_respawn_time = 0
 
         #Creating obstacles
         self.spawn_enemies(25)
@@ -412,7 +453,6 @@ class Game:
         self.final_round = False
 
         #XP system
-        self.xp_per_enemy = 20
         self.kills = 0
 
         #Fog of war
@@ -497,10 +537,59 @@ class Game:
             (200, 60, 60),
             (255, 255, 255)
         )
+    
+    def respawn_player_next_round(self):
+        #Get next respawn point
+        spawn_pos = self.get_safe_respawn_point()
+
+        #Move player
+        self.player.rect.center = spawn_pos
+        
+        #Reset player stats
+        self.player.health = self.player.max_health
+        self.player.power = self.player.max_power
+
+        #Brief invulnerability
+        self.player.last_hit_time = pygame.time.get_ticks()
+
+        #Clear old entities
+        self.bullet_group.empty()
+        self.obstacle_group.empty()
+
+        #Spawn stronger enemies
+        enemy_count = 25 + (self.current_round - 1)* 5
+        self.spawn_enemies(enemy_count)
+
+        #Restart timer
+        self.round_start_time = pygame.time.get_ticks()
+
+        #Respawn time
+        self.last_respawn_time = pygame.time.get_ticks()
+
+        #Reset camera instantly
+        self.camera_group.centered_player_cam(self.player)
+
+    def get_safe_respawn_point (self):
+        for g in range(len(self.respawn_points)):
+            point = self.respawn_points.popleft()
+
+            safe = True
+            for enemy in self.obstacle_group:
+                if point.distance_to(enemy.rect.center) < RESPAWN_SAFE_RADIUS:
+                    safe = False
+                    break
+            
+            #Rotate queue
+            self.respawn_points.append(point)
+
+            if safe:
+                return point
+        
+        return self.respawn_points[0]
 
     def reset_game(self):
         self.score = 0
-        self.player.health = 5
+        # self.player.health = 5
         self.kills = 0
         self.round_over = False
 
@@ -511,6 +600,7 @@ class Game:
 
         #Recreating the character
         self.player = Player((500, 300), self.camera_group, self.bullet_group)
+        self.player.game = self
 
         #Spawn enemies again
         self.spawn_enemies(25)
@@ -519,42 +609,74 @@ class Game:
         self.round_start_time = pygame.time.get_ticks()
     
     def end_round(self):
+        # Prevent multiple calls in the same frame
         if self.round_over:
             return
         
+        # Mark round as over immediately
         self.round_over = True
 
+        #Kill all enemies immediately 
+        for enemy in self.obstacle_group:
+            enemy.kill()
+        self.obstacle_group.empty()
+
+        # Save score for this round
         self.scores.append({
             "kills": self.kills,
             "level": self.player.level
         })
+
+        # Sort scores and keep only top max_scores
         self.scores.sort(
-            key =lambda s: (s["kills"], s["level"]),
-            reverse = True
+            key=lambda s: (s["kills"], s["level"]),
+            reverse=True
         )
         self.scores = self.scores[:self.max_scores]
 
+        # Check if this was the last round
         if self.current_round >= self.max_rounds:
             self.final_round = True
             self.state = SCOREBOARD
             self.scoreboard_time = pygame.time.get_ticks()
+            return 
         else:
-            self.final_round = False
+            # Prepare next round
             self.current_round += 1
-            self.state = SCOREBOARD
+            self.kills = 0
+            self.score = 0
+
+            # Respawn player at safe location
+            self.respawn_player_next_round()
+
+            # Reset the round_over flag so next round can end properly
+            self.round_over = False
+
+            # Set game state to PLAYING
+            self.state = PLAYING
 
     def spawn_enemies(self, amount = 25):
         types = list(ENEMY_TYPES.keys())
 
         for e in range (amount):
-            enemy_type = randint(0, len(types) - 1)
+            for attempt in range (10):
+                pos = pygame.math.Vector2(
+                    randint(WORLD_LEFT, WORLD_RIGHT), 
+                    randint(WORLD_TOP, WORLD_BOTTOM)
+                )
 
-            Obstacle(
-                (randint(WORLD_LEFT, WORLD_RIGHT), randint(WORLD_TOP, WORLD_BOTTOM)),
-                [self.camera_group, self.obstacle_group],
-                self.player,
-                types[enemy_type]
-            )
+                #Safe distance from players
+                if pos.distance_to(self.player.rect.center) < RESPAWN_SAFE_RADIUS * 1.5:
+                    continue
+
+                Obstacle(
+                    pos,
+                    [self.camera_group, self.obstacle_group],
+                    self.player,
+                    types[randint(0, len(types)- 1)]
+                )
+                break
+
 
     def collision_handling(self):
         #Player collision
@@ -566,8 +688,6 @@ class Game:
             hit_enemies = pygame.sprite.spritecollide(bullet,self.obstacle_group, False)
 
             if hit_enemies:
-                bullet.kill()
-
                 for enemy in hit_enemies:
                     died = enemy.take_damage(self.player.damage)
 
@@ -575,11 +695,12 @@ class Game:
                         self.kills += 1
                         self.score = self.kills
                         self.player.add_xp(enemy.xp_reward)
+
+                bullet.kill()
+            
         
         if self.player.health <= 0:
             self.end_round()
-            # self.scores.sort(reverse = True)
-            # self.scores = self.scores[:self.max_scores]
 
     def handling_events(self):
         for event in pygame.event.get(): 
@@ -619,13 +740,6 @@ class Game:
                     elif self.state == PAUSED:
                         self.state = PLAYING
 
-                if self.state == PAUSED:
-                    if self.resume_button.is_clicked(event):
-                        self.state = PLAYING
-                        self.state = PLAYING
-                    elif self.pause_quit_button.is_clicked(event):
-                        self.running = MENU
-
                 if event.key == pygame.K_RETURN and self.state == SCOREBOARD:
                     self.reset_game()
                     self.state = MENU
@@ -647,7 +761,7 @@ class Game:
                         not self.sonar_active and
                         self.player.power >= self.sonar_cost
                     ):
-                        self.player.power -= self.sonar_cooldown
+                        self.player.power -= self.sonar_cost
                         self.sonar_active = True
                         self.sonar_start_time = current
                         self.last_sonar_time = current
@@ -755,12 +869,7 @@ class Game:
                                       True, 
                                       (200, 200, 200))
             self.screen.blit(hint, hint.get_rect(center= (750, 560)))
-            
-            if pygame.time.get_ticks() - self.scoreboard_time > 2500:
-                self.current_round = 1
-                self.final_round = False
-                self.stete = MENU
-                return
+            return
 
         self.replay_button.draw(self.screen)
         self.end_button.draw(self.screen)
