@@ -9,6 +9,25 @@ PAUSED = "paused"
 SCOREBOARD = "scoreboard"
 MENU = "menu"
 
+#Game mode
+SINGLEPLAYER = "singleplayer"
+MULTIPLAYER = "multiplayer"
+
+#Game Configurations
+SINGLEPLAYER_CONFIG = {
+    "timer": False,
+    "rounds": False,
+    "spawn_interval": 5000,
+}
+MULTIPLAYER_CONFIG = {
+    "timer": True,
+    "rounds": True,
+    "round_time": 180,
+}
+
+#Scoreboard overlay
+SCOREBOARD_POPUP = "scoreboard_popup"
+
 #World Boundaries
 WORLD_LEFT = -1824
 WORLD_RIGHT = 1824
@@ -405,6 +424,9 @@ class Game:
         pygame.display.set_caption("Subnautic Shooter")
         self.fps = pygame.time.Clock()
 
+        #Mode Tracker
+        self.game_mode = None
+
         #General Setup
         self.camera_group = Camera()
         self.bullet_group = pygame.sprite.Group()
@@ -420,6 +442,11 @@ class Game:
             pygame.math.Vector2(1400, 1000),
             pygame.math.Vector2(-900, -1200)
         ])
+
+        #Single Player survival tracker
+        self.survival_start_time = 0
+        self.survival_end_time = 0
+        self.last_spawn_tick = 0
 
         #Respawn Delay
         self.respawn_delay = 2000
@@ -445,6 +472,7 @@ class Game:
         #Round Timer
         self.round_time = 120
         self.round_start_time = 0
+        self.remaining_time = 0
 
         #Number of rounds
         self.current_round = 1
@@ -589,9 +617,14 @@ class Game:
 
     def reset_game(self):
         self.score = 0
-        # self.player.health = 5
         self.kills = 0
         self.round_over = False
+        self.current_round = 1
+        self.final_round = False
+
+        if self.game_mode == SINGLEPLAYER:
+            self.survival_start_time = pygame.time.get_ticks()
+            self.last_spawn_tick = pygame.time.get_ticks()
 
         #Clearing all entities
         self.bullet_group.empty()
@@ -616,16 +649,27 @@ class Game:
         # Mark round as over immediately
         self.round_over = True
 
+        if self.game_mode == MULTIPLAYER:
+            self.state = SCOREBOARD
+            self.scoreboard_time = pygame.time.get_ticks()
+
         #Kill all enemies immediately 
         for enemy in self.obstacle_group:
             enemy.kill()
         self.obstacle_group.empty()
 
         # Save score for this round
-        self.scores.append({
-            "kills": self.kills,
-            "level": self.player.level
-        })
+        if self.game_mode == SINGLEPLAYER:
+            self.scores.append({
+                "kills": self.kills,
+                "time": (self.survival_end_time - self.survival_start_time) // 1000
+            })
+        else:
+            self.scores.append({
+                "kills": self.kills,
+                "level": self.player.level,
+                "time": self.round_time - self.remaining_time
+            })
 
         # Sort scores and keep only top max_scores
         self.scores.sort(
@@ -700,7 +744,15 @@ class Game:
             
         
         if self.player.health <= 0:
-            self.end_round()
+            if self.game_mode == SINGLEPLAYER:
+                self.survival_end_time = pygame.time.get_ticks()
+                self.scores.append({
+                    "kills": self.kills,
+                    "time": (self.survival_end_time - self.survival_start_time) // 1000
+                })
+                self.state = SCOREBOARD
+            else:
+                self.end_round()
 
     def handling_events(self):
         for event in pygame.event.get(): 
@@ -718,10 +770,15 @@ class Game:
 
                 elif self.state == MENU:
                     if self.play_button.is_clicked(event):
+                        self.game_mode = SINGLEPLAYER
                         self.reset_game()
+                        self.survival_start_time = pygame.time.get_ticks()
                         self.state = PLAYING
                     elif self.multi_button.is_clicked(event):
-                        print("Multiplayer coming soon")
+                        self.game_mode = MULTIPLAYER
+                        self.round_time = MULTIPLAYER_CONFIG["round_time"]
+                        self.reset_game()
+                        self.state = PLAYING
                     elif self.quit_button.is_clicked(event):
                         self.running = False
                 
@@ -732,6 +789,12 @@ class Game:
                         self.state = MENU
 
             if event.type == pygame.KEYDOWN:
+                #Toggling Scoreboard
+                if event.key == pygame.K_BACKSPACE:
+                    if self.state == PLAYING:
+                        self.state = SCOREBOARD_POPUP
+                    elif self.state == SCOREBOARD_POPUP:
+                        self.state = PLAYING
 
                 #Toggling Pause
                 if event.key == pygame.K_ESCAPE:
@@ -767,7 +830,16 @@ class Game:
                         self.last_sonar_time = current
 
     def update(self):
+        if self.state != PLAYING:
+            return
+        
         if self.state == PLAYING:
+            if self.game_mode == SINGLEPLAYER:
+                now = pygame.time.get_ticks()
+                if now - self.last_spawn_tick >= SINGLEPLAYER_CONFIG["spawn_interval"]:
+                    self.spawn_enemies(5 + self.current_round)
+                    self.last_spawn_tick = now
+
             self.camera_group.update()
             self.bullet_group.update()
             self.collision_handling()
@@ -789,6 +861,9 @@ class Game:
                 self.sonar_active = False
     
     def update_timer(self):
+        if self.game_mode == SINGLEPLAYER:
+            return None
+        
         elapsed = (pygame.time.get_ticks() - self.round_start_time) // 1000
         remaining = max(0, self.round_time - elapsed) 
 
@@ -856,24 +931,44 @@ class Game:
         title= self.font_b.render("FINAL RESULTS", True, (255, 255, 255))
         self.screen.blit(title, title.get_rect(center= (750, 200)))
 
-        for i, entry in enumerate(self.scores):
-            text = self.font_s.render(
-                f"{i + 1}. Kills: {entry['kills']} | Level: {entry['level']}", 
-                True, 
-                (255, 255, 255)
-            )
-            self.screen.blit(text, (550, 300 + i * 50))
-
-        if self.final_round:
-            hint = self.font_s.render("Game complete! Returning to menu...", 
-                                      True, 
-                                      (200, 200, 200))
-            self.screen.blit(hint, hint.get_rect(center= (750, 560)))
-            return
+        y = 300
+        for i, score in enumerate(self.scores):
+            if self.game_mode == SINGLEPLAYER:
+                text = f"{i + 1}. Kills: {score['kills']} | Time: {score['time']}s"
+            else:
+                text = f"{i + 1}. Kills: {score['kills']} | Level: {score['level']} | Time: {score['time']}s"
+            
+            line = self.font_s.render(text, True, (255, 255, 255))
+            self.screen.blit(line, (500, y))
+            y += 40
 
         self.replay_button.draw(self.screen)
         self.end_button.draw(self.screen)
     
+    def draw_scoreboard_popup(self):
+        overlay = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+
+        title = self.font_b.render("SCOREBOARD", True, (255, 255, 255))
+        self.screen.blit (title, title.get_rect(center = (750, 200)))
+
+        if self.game_mode == SINGLEPLAYER:
+            time_alive = (pygame.time.get_ticks() - self.survival_start_time) // 1000
+            text = self.font_s.render(
+                f"Kills: {self.kills} | Time Survived: {time_alive}s",
+                True,
+                (255, 255, 255)
+            )
+            self.screen.blit(text, text.get_rect(center = (750, 350)))
+        
+        elif self.game_mode == MULTIPLAYER:
+            text = self.font_s.render(
+                f"Round {self.current_round} | Kills: {self.kills}",
+                True,
+                (255, 255, 255)
+            )
+            self.screen.blit(text,text.get_rect(center = (750, 350)))
     def draw_paused_menu (self):
         overlay = pygame.Surface(self.screen.get_size())
         overlay.set_alpha(180)
@@ -971,7 +1066,7 @@ class Game:
         ui_y += score_surf.get_height() + gap
 
         # Timer
-        if self.state == PLAYING:
+        if self.state == PLAYING and self.game_mode == MULTIPLAYER:
             timer_surf = self.font_s.render(
                 f"Time: {self.remaining_time // 60:02}:{self.remaining_time % 60:02}",
                 True,
@@ -981,16 +1076,19 @@ class Game:
             ui_y += timer_surf.get_height() + gap
 
         # Round
-        round_surf = self.font_s.render(
-            f"Round: {self.current_round}/{self.max_rounds}",
-            True,
-            (255, 255, 255)
-        )
-        self.screen.blit(round_surf, (ui_x, ui_y))
-        ui_y += round_surf.get_height() + gap
+        if self.game_mode == MULTIPLAYER:
+            round_surf = self.font_s.render(
+                f"Round: {self.current_round}/{self.max_rounds}",
+                True,
+                (255, 255, 255)
+            )
+            self.screen.blit(round_surf, (ui_x, ui_y))
+            ui_y += round_surf.get_height() + gap
         
         if self.state == SCOREBOARD:
             self.draw_scoreboard()
+        elif self.state == SCOREBOARD_POPUP:
+            self.draw_scoreboard_popup()
         elif self.state == PAUSED:
             self.draw_paused_menu()
 
