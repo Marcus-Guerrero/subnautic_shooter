@@ -361,6 +361,48 @@ class Bullet(pygame.sprite.Sprite):
         if abs(self.rect.x) > 4000 or abs(self.rect.y) >4000:
             self.kill()
 
+class PortalNode:
+    def __init__ (self, position):
+        self.position = pygame.math.Vector2(position)
+        self.next = None
+        self.prev = None
+
+class Portal (pygame.sprite.Sprite):
+    def __init__ (self, node, group):
+        super().__init__(group)
+
+        #Graphics and rectangles
+        self.image = pygame.image.load("graphics/Portal.png").convert_alpha()
+        self.rect = self.image.get_rect(center = node.position)
+        self.node = node
+        self.draw_offset_y = 40
+
+        #Cooldown system
+        self.cooldown = 2000
+        self.last_used = -9999
+    
+    def try_teleport (self, player, direction):
+        current_time = pygame.time.get_ticks()
+
+        if current_time - self.last_used < self.cooldown:
+            return
+        
+        if direction == "next" and self.node.next:
+            target = self.node.next.position
+        elif direction == "prev" and self.node.prev:
+            target = self.node.prev.position
+        else:
+            return
+        
+        #Teleport Player
+        player.rect.center = target
+
+        #Prevent instant trigger
+        player.last_hit_time = current_time
+
+        #Last use time
+        self.last_used = current_time
+
 class Camera (pygame.sprite.Group):
     def __init__(self):
         super().__init__()
@@ -386,7 +428,10 @@ class Camera (pygame.sprite.Group):
         offset = self.ground_rect.topleft - self.offset
         self.surface.blit(self.ground_surf, offset)
 
-        for sprite in sorted(self.sprites(), key = lambda sprite: sprite.rect.centery):
+        for sprite in sorted(
+            self.sprites(), 
+            key = lambda sprite: sprite.rect.centery + getattr(sprite, "draw_offset_y", 0)
+        ):
             offset_pos = sprite.rect.topleft - self.offset
             self.surface.blit(sprite.image, offset_pos)
 
@@ -635,6 +680,9 @@ class Game:
         self.player = Player((500, 300), self.camera_group, self.bullet_group)
         self.player.game = self
 
+        #Creating a portal
+        self.create_portal()
+
         #Spawn enemies again
         self.spawn_enemies(25)
 
@@ -720,7 +768,22 @@ class Game:
                     types[randint(0, len(types)- 1)]
                 )
                 break
+    
+    def portal_collision(self):
+            portals = pygame.sprite.spritecollide(
+                self.player, self.portal_group, False
+            )
 
+            if not portals:
+                return
+            
+            keys = pygame.key.get_pressed()
+
+            for portal in portals:
+                if keys[pygame.K_e]:
+                    portal.try_teleport(self.player, "next")
+                elif keys[pygame.K_q]:
+                    portal.try_teleport(self.player, "prev")
 
     def collision_handling(self):
         #Player collision
@@ -741,7 +804,9 @@ class Game:
                         self.player.add_xp(enemy.xp_reward)
 
                 bullet.kill()
-            
+
+        #Calling portal collision 
+        self.portal_collision()
         
         if self.player.health <= 0:
             if self.game_mode == SINGLEPLAYER:
@@ -810,7 +875,7 @@ class Game:
                 if self.state == PLAYING and event.key == pygame.K_SPACE:
                         self.player.player_shooting(self.camera_group.offset)
                 
-                if self.state == PLAYING and event.key == pygame.K_q:
+                if self.state == PLAYING and event.key == pygame.K_f:
                     current = pygame.time.get_ticks()
 
                     cooldown_ready = (
@@ -969,6 +1034,7 @@ class Game:
                 (255, 255, 255)
             )
             self.screen.blit(text,text.get_rect(center = (750, 350)))
+
     def draw_paused_menu (self):
         overlay = pygame.Surface(self.screen.get_size())
         overlay.set_alpha(180)
@@ -990,7 +1056,28 @@ class Game:
         self.play_button.draw(self.screen)
         self.multi_button.draw(self.screen)
         self.quit_button.draw(self.screen)
+    
+    def create_portal (self):
+        self.portal_group = pygame.sprite.Group()
 
+        #Create nodes
+        nodes = [
+            PortalNode((0, 0)),
+            PortalNode ((900, - 600)),
+            PortalNode((-1200, 900)),
+            PortalNode((1400, 1200))
+        ]
+
+        #Linked List
+        for i in range(len(nodes)):
+            if i > 0:
+                nodes[i].prev = nodes[i - 1]
+            if i < len(nodes) - 1:
+                nodes[i].next = nodes[i + 1]
+        
+        for node in nodes:
+            Portal(node, [self.camera_group, self.portal_group])
+        
     def draw(self):
         if self.state == MENU:
             self.draw_start_menu()
