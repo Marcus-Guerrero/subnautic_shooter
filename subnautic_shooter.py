@@ -76,6 +76,11 @@ ENEMY_TYPES = {
     
 }
 
+#Ability UI
+ABILITY_ICON_RADIUS = 28
+ABILITY_ICON_GAP = 20
+ABILITY_ICON_ALPHA = 160
+
 class Player(pygame.sprite.Sprite):
     def __init__(self, pos, group, bullet_group):
         super().__init__(group)
@@ -541,6 +546,8 @@ class Game:
         #Sonar cooldown
         self.sonar_cooldown = 6.0
         self.last_sonar_time = -9999
+        self.sonar_end_grace = 800
+        self.sonar_end_time = 0
 
         #Current state of game status
         self.state = MENU
@@ -786,6 +793,8 @@ class Game:
                     portal.try_teleport(self.player, "prev")
 
     def collision_handling(self):
+        if pygame.time.get_ticks() - self.sonar_end_time < self.sonar_end_grace:
+            return
         #Player collision
         if pygame.sprite.spritecollide(self.player, self.obstacle_group, False):
             self.player.take_damage()
@@ -924,6 +933,7 @@ class Game:
             elapsed = (pygame.time.get_ticks() - self.sonar_start_time) / 1000
             if elapsed >= self.sonar_duration:
                 self.sonar_active = False
+                self.sonar_end_time = pygame.time.get_ticks()
     
     def update_timer(self):
         if self.game_mode == SINGLEPLAYER:
@@ -986,6 +996,95 @@ class Game:
         )
 
         self.screen.blit(self.fog_surface, (0, 0))
+    
+    def draw_cooldown_circle (self, center, radius, ratio):
+        if ratio <= 0:
+            return
+        
+        size = radius * 2
+        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+
+        # Full dark overlay
+        pygame.draw.circle(
+            surf,
+            (0, 0, 0, 170),
+            (radius, radius),
+            radius
+        )
+
+        # Reveal from top to bottom
+        reveal_height = int(size * (1 - ratio))
+        reveal_rect = pygame.Rect(0, 0, size, reveal_height)
+
+        surf.fill((0, 0, 0, 0), reveal_rect)
+
+        self.screen.blit(
+            surf,
+            surf.get_rect(center=center)
+        )
+    
+    def draw_ability_icons(self):
+        base_x = 60
+        base_y = self.screen.get_height() - 80
+
+        font = self.font_s
+
+        # Torpedo
+        bullet_center = (base_x, base_y)
+
+        pygame.draw.circle(
+            self.screen,
+            (120, 200, 255),
+            bullet_center,
+            ABILITY_ICON_RADIUS
+        )
+
+        pygame.draw.circle(
+            self.screen,
+            (255, 255, 255),
+            bullet_center,
+            ABILITY_ICON_RADIUS,
+            2
+        )
+
+        key = font.render("SPACE", True, (255, 255, 255))
+        self.screen.blit(key, key.get_rect(center=(base_x, base_y + 42)))
+
+        # Sonar
+        sonar_x = base_x + ABILITY_ICON_RADIUS * 2 + ABILITY_ICON_GAP
+        sonar_center = (sonar_x, base_y)
+
+        locked = self.player.level < 3
+        current = pygame.time.get_ticks()
+        elapsed = (current - self.last_sonar_time) / 1000
+        cooldown_ratio = max(0, (self.sonar_cooldown - elapsed) / self.sonar_cooldown)
+
+        color = (120, 120, 120) if locked else (50, 200, 255)
+
+        pygame.draw.circle(
+            self.screen,
+            color,
+            sonar_center,
+            ABILITY_ICON_RADIUS
+        )
+
+        pygame.draw.circle(
+            self.screen,
+            (255, 255, 255),
+            sonar_center,
+            ABILITY_ICON_RADIUS,
+            2
+        )
+
+        if not locked:
+            self.draw_cooldown_circle(
+                sonar_center,
+                ABILITY_ICON_RADIUS,
+                cooldown_ratio
+            )
+
+        key = font.render("F", True, (255, 255, 255))
+        self.screen.blit(key, key.get_rect(center=(sonar_x, base_y + 42)))
         
     def draw_scoreboard(self):
         overlay = pygame.Surface(self.screen.get_size())
@@ -1125,28 +1224,6 @@ class Game:
         self.screen.blit(level_surf, (ui_x, ui_y))
         ui_y += level_surf.get_height() + gap
 
-        # Sonar 
-        current = pygame.time.get_ticks()
-        time_since = (current - self.last_sonar_time) / 1000
-        remaining = max(0, self.sonar_cooldown - time_since)
-
-        if self.player.level < 3:
-            sonar_text = "SONAR LOCKED (LVL 3)"
-            color = (120, 120, 120)
-        elif self.sonar_active:
-            sonar_text = "SONAR ACTIVE"
-            color = (50, 200, 255)
-        elif remaining <= 0:
-            sonar_text = "SONAR READY"
-            color = (120, 220, 120)
-        else:
-            sonar_text = f"SONAR COOLDOWN: {remaining:.1f}s"
-            color = (200, 200, 200)
-
-        sonar_surf = self.font_s.render(sonar_text, True, color)
-        self.screen.blit(sonar_surf, (ui_x, ui_y))
-        ui_y += sonar_surf.get_height() + gap
-
         # Score
         score_surf = self.font_s.render(f"Score: {self.score}", True, (255, 255, 255))
         self.screen.blit(score_surf, (ui_x, ui_y))
@@ -1178,6 +1255,8 @@ class Game:
             self.draw_scoreboard_popup()
         elif self.state == PAUSED:
             self.draw_paused_menu()
+        
+        self.draw_ability_icons()
 
         pygame.display.update() 
     
