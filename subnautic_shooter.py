@@ -1,6 +1,6 @@
 import pygame
 from sys import exit
-from random import randint
+from random import randint, shuffle
 from collections import deque
 
 #Game status
@@ -684,11 +684,17 @@ class Game:
         self.camera_group.empty()
 
         #Recreating the character
-        self.player = Player((500, 300), self.camera_group, self.bullet_group)
+        spawn_pos = self.get_safe_respawn_point()
+        self.player = Player(spawn_pos, self.camera_group, self.bullet_group)
         self.player.game = self
 
         #Creating a portal
         self.create_portal()
+
+        #Shuffle player spawn points every new game
+        spawn_list = list(self.respawn_points)
+        shuffle(spawn_list)
+        self.respawn_points = deque(spawn_list)
 
         #Spawn enemies again
         self.spawn_enemies(25)
